@@ -1836,6 +1836,7 @@ static int oplus_adfr_sa_floor_update(struct dsi_panel *panel, unsigned int qsyn
 {
 	unsigned int auto_mode = OPLUS_ADFR_AUTO_OFF;
 	unsigned int min_fps = 0;
+	struct dsi_display_mode_priv_info *priv_info = NULL;
 	struct oplus_adfr_params *p_oplus_adfr_params = oplus_adfr_get_params(panel);
 
 	if (!p_oplus_adfr_params || !panel->cur_mode || !panel->cur_mode->priv_info) {
@@ -1843,11 +1844,13 @@ static int oplus_adfr_sa_floor_update(struct dsi_panel *panel, unsigned int qsyn
 		return -EINVAL;
 	}
 
+	priv_info = panel->cur_mode->priv_info;
 	min_fps = panel->cur_mode->timing.refresh_rate;
-	if ((qsync_mode != SDE_RM_QSYNC_DISABLED)
-			&& panel->cur_mode->priv_info->oplus_adfr_min_fps_mapping_table_count) {
+	if ((qsync_mode != SDE_RM_QSYNC_DISABLED) && priv_info->oplus_adfr_min_fps_mapping_table_count) {
 		auto_mode = OPLUS_ADFR_AUTO_ON;
 		min_fps = oplus_adfr_get_sa_floor(panel);
+		if (min_fps < priv_info->oplus_adfr_min_fps_mapping_table[priv_info->oplus_adfr_min_fps_mapping_table_count - 1])
+			min_fps = priv_info->oplus_adfr_min_fps_mapping_table[priv_info->oplus_adfr_min_fps_mapping_table_count - 1];
 	}
 
 	if (auto_mode != p_oplus_adfr_params->auto_mode) {
