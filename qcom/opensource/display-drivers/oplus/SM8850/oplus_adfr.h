@@ -127,6 +127,8 @@ struct oplus_adfr_params {
 	unsigned int sa_min_fps;						/* the minimum self-refresh rate when no image would be sent to ddic in sa mode */
 	bool sa_min_fps_updated;						/* indicates whether sa min fps is updated or not */
 	unsigned int qsync_mode;						/* the latest qsync mode requested by sde */
+	unsigned int *sa_min_fps_bl_table;				/* backlight threshold and sa min fps pairs, highest threshold first */
+	unsigned int sa_min_fps_bl_table_count;			/* the number of pairs in sa_min_fps_bl_table */
 	bool skip_min_fps_setting;						/* indicates whether min fps setting should be skipped or not */
 	unsigned int sw_fps;							/* software vsync value */
 	struct pinctrl_state *te1_active;				/* a pinctrl state used to control te1 active */

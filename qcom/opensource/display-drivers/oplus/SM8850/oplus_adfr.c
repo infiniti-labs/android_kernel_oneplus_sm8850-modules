@@ -158,6 +158,7 @@ struct oplus_adfr_params *oplus_adfr_get_params(void *dsi_panel)
 int oplus_adfr_init(void *dsi_panel)
 {
 	int rc = 0;
+	int length = 0;
 	unsigned int value = 0;
 	struct dsi_panel *panel = dsi_panel;
 	struct dsi_parser_utils *utils = NULL;
@@ -228,6 +229,21 @@ int oplus_adfr_init(void *dsi_panel)
 			p_oplus_adfr_params->osync_mode_timer.function = oplus_adfr_osync_mode_timer_handler;
 		}
 	}
+
+	/* oplus,adfr-sa-min-fps-bl-table */
+	length = utils->count_u32_elems(utils->data, "oplus,adfr-sa-min-fps-bl-table");
+	if ((length >= 2) && !(length % 2)) {
+		p_oplus_adfr_params->sa_min_fps_bl_table = kcalloc(length, sizeof(unsigned int), GFP_KERNEL);
+		if (p_oplus_adfr_params->sa_min_fps_bl_table
+				&& !utils->read_u32_array(utils->data, "oplus,adfr-sa-min-fps-bl-table",
+					p_oplus_adfr_params->sa_min_fps_bl_table, length)) {
+			p_oplus_adfr_params->sa_min_fps_bl_table_count = length / 2;
+		} else {
+			kfree(p_oplus_adfr_params->sa_min_fps_bl_table);
+			p_oplus_adfr_params->sa_min_fps_bl_table = NULL;
+		}
+	}
+	ADFR_INFO("sa_min_fps_bl_table_count:%u\n", p_oplus_adfr_params->sa_min_fps_bl_table_count);
 
 	/* oplus,adfr-oa-use-fixed-te */
 	p_oplus_adfr_params->oa_use_fixed_te = utils->read_bool(utils->data, "oplus,adfr-oa-use-fixed-te");
@@ -1736,6 +1752,13 @@ int oplus_adfr_sa_handle(void *sde_encoder_virt)
 
 	OPLUS_ADFR_TRACE_BEGIN("oplus_adfr_sa_handle");
 
+	if (p_oplus_adfr_params->auto_mode_updated && (p_oplus_adfr_params->auto_mode == OPLUS_ADFR_AUTO_ON)
+			&& p_oplus_adfr_params->need_filter_auto_on_cmd) {
+		ADFR_DEBUG("defer auto on cmds until the next rd_ptr irq\n");
+		OPLUS_ADFR_TRACE_END("oplus_adfr_sa_handle");
+		return 0;
+	}
+
 	if (p_oplus_adfr_params->auto_mode_updated) {
 		rc = oplus_adfr_auto_mode_update(display, p_oplus_adfr_params->auto_mode);
 		if (rc) {
@@ -1792,6 +1815,52 @@ int oplus_adfr_sa_handle(void *sde_encoder_virt)
 	return rc;
 }
 
+static unsigned int oplus_adfr_get_sa_floor(struct dsi_panel *panel)
+{
+	unsigned int i = 0;
+	unsigned int bl_level = panel->bl_config.bl_level;
+	struct oplus_adfr_params *p_oplus_adfr_params = oplus_adfr_get_params(panel);
+
+	for (i = 0; i < p_oplus_adfr_params->sa_min_fps_bl_table_count; i++) {
+		if (bl_level >= p_oplus_adfr_params->sa_min_fps_bl_table[2 * i])
+			return p_oplus_adfr_params->sa_min_fps_bl_table[2 * i + 1];
+	}
+
+	return panel->qsync_caps.qsync_min_fps;
+}
+
+static int oplus_adfr_sa_floor_update(struct dsi_panel *panel, unsigned int qsync_mode)
+{
+	unsigned int auto_mode = OPLUS_ADFR_AUTO_OFF;
+	unsigned int min_fps = 0;
+	struct oplus_adfr_params *p_oplus_adfr_params = oplus_adfr_get_params(panel);
+
+	if (!p_oplus_adfr_params || !panel->cur_mode || !panel->cur_mode->priv_info) {
+		ADFR_ERR("invalid panel params\n");
+		return -EINVAL;
+	}
+
+	min_fps = panel->cur_mode->timing.refresh_rate;
+	if ((qsync_mode != SDE_RM_QSYNC_DISABLED)
+			&& panel->cur_mode->priv_info->oplus_adfr_min_fps_mapping_table_count) {
+		auto_mode = OPLUS_ADFR_AUTO_ON;
+		min_fps = oplus_adfr_get_sa_floor(panel);
+	}
+
+	if (auto_mode != p_oplus_adfr_params->auto_mode) {
+		p_oplus_adfr_params->auto_mode = auto_mode;
+		p_oplus_adfr_params->auto_mode_updated = true;
+		p_oplus_adfr_params->sa_min_fps_updated = true;
+	}
+
+	if (min_fps != p_oplus_adfr_params->sa_min_fps) {
+		p_oplus_adfr_params->sa_min_fps = min_fps;
+		p_oplus_adfr_params->sa_min_fps_updated = true;
+	}
+
+	return 0;
+}
+
 /* reset adfr status as panel power on or timing switch */
 int oplus_adfr_status_reset(void *dsi_panel)
 {
@@ -1840,12 +1909,7 @@ int oplus_adfr_status_reset(void *dsi_panel)
 
 		p_oplus_adfr_params->sa_min_fps = refresh_rate;
 		p_oplus_adfr_params->sa_min_fps_updated = false;
-		if (p_oplus_adfr_params->qsync_mode != SDE_RM_QSYNC_DISABLED) {
-			p_oplus_adfr_params->auto_mode = OPLUS_ADFR_AUTO_ON;
-			p_oplus_adfr_params->auto_mode_updated = true;
-			p_oplus_adfr_params->sa_min_fps = panel->qsync_caps.qsync_min_fps;
-			p_oplus_adfr_params->sa_min_fps_updated = true;
-		}
+		oplus_adfr_sa_floor_update(panel, p_oplus_adfr_params->qsync_mode);
 		if (oplus_adfr_high_precision_sa_mode_is_enabled(p_oplus_adfr_params)) {
 			p_oplus_adfr_params->sa_high_precision_fps_updated = false;
 		}
@@ -2818,23 +2882,7 @@ int oplus_adfr_set_osync_params(void *sde_connector, unsigned int oplus_adfr_osy
 	h_skew = display->panel->cur_mode->timing.h_skew;
 
 	if (h_skew == STANDARD_ADFR || h_skew == STANDARD_MFR) {
-		if (oplus_adfr_osync_params == OPLUS_ADFR_OSYNC_MODE) {
-			prop_val = c_conn->qsync_mode == SDE_RM_QSYNC_DISABLED ?
-					OPLUS_ADFR_AUTO_OFF : OPLUS_ADFR_AUTO_ON;
-			if (prop_val != p_oplus_adfr_params->auto_mode) {
-				p_oplus_adfr_params->auto_mode = prop_val;
-				p_oplus_adfr_params->auto_mode_updated = true;
-				p_oplus_adfr_params->sa_min_fps_updated = true;
-			}
-		} else if (oplus_adfr_osync_params == OPLUS_ADFR_OSYNC_MIN_FPS) {
-			prop_val = display->panel->cur_mode->timing.refresh_rate;
-			if (c_conn->qsync_mode != SDE_RM_QSYNC_DISABLED)
-				prop_val = display->panel->qsync_caps.qsync_min_fps;
-			if (prop_val != p_oplus_adfr_params->sa_min_fps) {
-				p_oplus_adfr_params->sa_min_fps = prop_val;
-				p_oplus_adfr_params->sa_min_fps_updated = true;
-			}
-		}
+		oplus_adfr_sa_floor_update(display->panel, c_conn->qsync_mode);
 		return 0;
 	}
 
