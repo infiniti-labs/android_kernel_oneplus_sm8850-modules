@@ -1822,8 +1822,11 @@ static unsigned int oplus_adfr_get_sa_floor(struct dsi_panel *panel)
 	struct oplus_adfr_params *p_oplus_adfr_params = oplus_adfr_get_params(panel);
 
 	for (i = 0; i < p_oplus_adfr_params->sa_min_fps_bl_table_count; i++) {
-		if (bl_level >= p_oplus_adfr_params->sa_min_fps_bl_table[2 * i])
-			return p_oplus_adfr_params->sa_min_fps_bl_table[2 * i + 1];
+		if (bl_level < p_oplus_adfr_params->sa_min_fps_bl_table[2 * i])
+			continue;
+		if (!p_oplus_adfr_params->sa_min_fps_bl_table[2 * i + 1])
+			return panel->cur_mode->timing.refresh_rate;
+		return p_oplus_adfr_params->sa_min_fps_bl_table[2 * i + 1];
 	}
 
 	return panel->qsync_caps.qsync_min_fps;
